@@ -1,5 +1,6 @@
 <html>
 	<head>
+		<meta charset="utf-8">
 		<script src='https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.4/MathJax.js?config=default'></script>
 		<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
 		<style>
@@ -28,19 +29,19 @@
 	<body>
 		<div class="container">
 		<h1>CS184/284A Fall 2026 Homework 4 Write-Up</h1>
-		<div style="text-align: center;">Names: </div>
+		<div style="text-align: center;">Names: Arian Namazi, Grégoire Serres</div>
 
 		<br>
 
-		Link to webpage: (TODO) <a href="https://cs184.eecs.berkeley.edu/fa26">cs184.eecs.berkeley.edu/fa26</a>
+		Link to webpage: <a href="https://cal-cs184-student.github.io/hw4-go-bears-writeup/">cal-cs184-student.github.io/hw4-go-bears-writeup</a>
 
 		<br>
 
-		Link to GitHub repository: (TODO) <a href="https://cs184.eecs.berkeley.edu/fa26">cs184.eecs.berkeley.edu/fa26</a>
+		Link to GitHub repository: <a href="https://github.com/cal-cs184-student/hw4-go-bears">github.com/cal-cs184-student/hw4-go-bears-writeup</a>
 
 		<figure>
 			<img src="assets/clothsim.png" alt="Cloth draped over sphere" style="width:70%"/>
-			<figcaption>You can add images with captions!</figcaption>
+			<figcaption>(TODO Arian: replace this image and caption with one of our own results.)</figcaption>
 		</figure>
 
 		<!--
@@ -48,39 +49,167 @@
 		-->
 
 		<h2>Overview</h2>
-		Give a high-level overview of what you implemented in this homework. Think about what you've built as a whole. Share your thoughts on what interesting things you've learned from completing the homework.
+		<p>We built a real-time cloth simulator. The cloth is a grid of point masses held together by structural, shearing and bending springs. Each time step computes gravity and the spring forces, moves the masses with Verlet integration, and keeps every spring within 10% of its rest length. The cloth collides with a sphere, a plane and itself (using a spatial hash), and is rendered with our own GLSL shaders: diffuse, Blinn-Phong, texture, bump and displacement mapping, and mirror reflection.</p>
+
+		<p>The main thing we learned is that a few simple local rules are enough to get folds, swings and wrinkles that look like real fabric, and that the look of the cloth depends on the balance between stiffness and weight more than on either one alone.</p>
 
 		<h2>Part 1: Masses and springs</h2>
-		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
 
-		<p>Here is an example 2x2 gridlike structure using an HTML table. Each <b>tr</b> is a row and each <b>td</b> is a column in that row. You might find this useful for framing and showing your result images in an organized fashion.</p>
+		<h3>The model</h3>
+		<p>The cloth is a grid of <code>num_width_points</code> × <code>num_height_points</code> point masses. Each spring remembers its rest length, which is the distance between its two masses when the grid is built, and pulls or pushes them back towards it. We use three kinds of springs, one for each way a cloth can deform:</p>
+		<ul>
+			<li><b>Structural</b> springs link a mass to its left neighbour and to the one above. They resist stretching along the rows and columns.</li>
+			<li><b>Shearing</b> springs link a mass to its upper-left and upper-right diagonal neighbours. Without them a square cell can flatten into a rhombus without changing any edge length, so the cloth would shear for free.</li>
+			<li><b>Bending</b> springs link a mass to the one two steps to its left and two steps above. They only change length when the cloth folds between two consecutive cells, so they resist bending out of the plane.</li>
+		</ul>
+		<p>A mass only creates springs towards the left and upwards. The spring to its right neighbour is created when the loop reaches that neighbour, so each spring exists exactly once.</p>
+
+		<h3>Implementation</h3>
+		<p><code>Cloth::buildGrid</code> has two loops over the grid.</p>
+
+		<p>The first loop creates the point masses, row by row, so that the mass at grid position (x, y) is stored at index <code>y * num_width_points + x</code> (row-major order, which the mesh-building code expects). With \(n\) masses along a side of length \(L\) there are \(n-1\) gaps, so the spacing is \(L/(n-1)\): the first mass is at (0, 0) and the last one exactly at (width, height). For a horizontal cloth every mass has y = 1 and the grid lies in the xz plane. For a vertical cloth the grid lies in the xy plane and each mass gets a small random z offset in [−1/1000, 1/1000]. Without this offset the cloth would be perfectly flat, all forces would stay in its plane, and it could never start to fold. A mass is pinned if its grid indices (x, y) are in the <code>pinned</code> list of the scene file, for example <code>[0,0]</code> and <code>[49,0]</code> in <code>pinned2.json</code>.</p>
+
+		<p>The second loop creates the springs. For each mass we add up to six springs, checking first that the neighbour exists:</p>
+		<ul>
+			<li>structural: left if x ≥ 1, above if y ≥ 1;</li>
+			<li>shearing: upper-left if x ≥ 1 and y ≥ 1, upper-right if x ≤ <code>num_width_points</code> − 2 and y ≥ 1;</li>
+			<li>bending: two to the left if x ≥ 2, two above if y ≥ 2.</li>
+		</ul>
+		<p>We need two separate loops because a spring stores pointers to its two masses. If we added springs while still pushing masses into <code>point_masses</code>, the vector could reallocate and the pointers we had already taken would no longer be valid.</p>
+
+		<p>As a check, we counted the springs for the 50 × 50 grid of <code>pinned2.json</code>: 4900 structural, 4802 shearing and 4800 bending, 14502 in total. This matches what we expect by hand, \(2n(n-1)\), \(2(n-1)^2\) and \(2n(n-2)\) with \(n = 50\).</p>
+
+		<h3>Problems we ran into</h3>
+		<ul>
+			<li>We first divided by \(n\) instead of \(n-1\) for the spacing, so the cloth was one cell too short.</li>
+			<li>In the horizontal case we had written <code>Vector3D pos</code> a second time inside the <code>else</code> block. This declared a new variable that hid the outer one, so all horizontal masses ended up at the default position. The compiler does not complain about this.</li>
+		</ul>
+
+		<h3>Results</h3>
+		<p>The screenshots below show <code>scene/pinned2.json</code> in wireframe mode before the simulation starts.</p>
+
+		<figure>
+			<img src="assets/p1_all.png" alt="Wireframe with all constraints" style="width:70%"/>
+			<figcaption>All constraints: the square grid with a cross in every cell.</figcaption>
+		</figure>
+
 		<div style="display: flex; flex-direction: column; align-items: center;">
 			<table style="width: 100%; text-align: center; border-collapse: collapse;">
 			  <tr>
-				<td style="text-align: center;">
-				  <img src="assets/clothsim.png" width="400px"/>
-				  <figcaption>Caption goes here.</figcaption>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p1_no_shearing.png" alt="Wireframe without shearing constraints" style="width:100%"/>
+				  <figcaption>Without shearing constraints: only the grid is left.</figcaption>
 				</td>
-				<td style="text-align: center;">
-				  <img src="assets/clothsim.png" width="400px"/>
-				  <figcaption>Caption goes here.</figcaption>
-				</td>
-			  </tr>
-			  <tr>
-				<td style="text-align: center;">
-				  <img src="assets/clothsim.png" width="400px"/>
-				  <figcaption>Caption goes here.</figcaption>
-				</td>
-				<td style="text-align: center;">
-				  <img src="assets/clothsim.png" width="400px"/>
-				  <figcaption>Caption goes here.</figcaption>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p1_only_shearing.png" alt="Wireframe with only shearing constraints" style="width:100%"/>
+				  <figcaption>Only shearing constraints: only the diagonals are left.</figcaption>
 				</td>
 			  </tr>
 			</table>
 		</div>
 
+		<p>The bending springs are enabled in the first two screenshots but cannot be told apart. A bending spring from (x, y) to (x − 2, y) is drawn exactly over the two structural springs between the same masses, so on a flat cloth they overlap.</p>
+
 		<h2>Part 2: Simulation via numerical integration</h2>
-		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+		<p><code>Cloth::simulate</code> advances the cloth by one time step \(\Delta t = 1 / (\text{frames per second} \times \text{steps per frame})\). With the default settings (90 and 30) it is called 2700 times per simulated second. Each call computes the forces, integrates the positions, and then limits how far the springs can stretch. The collision code of Parts 3 and 4 runs between the last two steps.</p>
+
+		<h3>Forces</h3>
+		<p>All point masses have the same mass, \(m = \text{width} \cdot \text{height} \cdot \text{density} / (n_w n_h)\). At the start of each step we reset the force stored in every point mass, otherwise the forces of the previous steps would keep adding up. We then set it to \(m \sum_i a_i\), where the \(a_i\) are the external accelerations given by the simulator (here only gravity).</p>
+
+		<p>Next we loop over the springs and skip those whose type is switched off in the GUI. For a spring of rest length \(l\) between masses \(a\) and \(b\), Hooke's law gives</p>
+		\[ F_s = k_s \left( \| p_b - p_a \| - l \right). \]
+		<p>We apply \(F_s\) to \(a\) along the unit vector from \(a\) to \(b\), and the opposite force to \(b\). A stretched spring (\(F_s \gt 0\)) pulls its two masses together and a compressed one pushes them apart. For bending springs we multiply \(k_s\) by 0.2, because cloth resists bending much less than it resists stretching.</p>
+
+		<h3>Verlet integration</h3>
+		<p>Verlet integration does not store a velocity. It uses the previous position instead: \(x_t - x_{t-\Delta t}\) plays the role of \(v\,\Delta t\). With the damping factor \(d\), the update for every mass that is not pinned is</p>
+		\[ x_{t+\Delta t} = x_t + (1-d)\,(x_t - x_{t-\Delta t}) + \frac{F_t}{m}\,\Delta t^2. \]
+		<p>In the code we save the current position, compute the new one, and store the saved value in <code>last_position</code>. Pinned masses are skipped. The GUI gives the damping in percent, so we divide it by 100 to get \(d\). The default of 0.2% looks very small, but it is applied 2700 times per second: without any force, less than 0.5% of a velocity would be left after one second (\(0.998^{2700} \approx 0.0045\)).</p>
+
+		<h3>Limiting the stretch</h3>
+		<p>With forces alone, the springs next to the pinned corners carry the whole weight of the cloth and stretch a lot, which makes it look like rubber. A larger \(k_s\) would help, but very stiff springs make the integration unstable unless the time step is much smaller. Instead we follow Provot (1995) and correct the positions directly after the integration. For every spring longer than \(1.1\,l\) we compute the excess length \(e = \| p_b - p_a \| - 1.1\,l\) and bring the two masses closer along the direction of the spring:</p>
+		<ul>
+			<li>if neither is pinned, each one moves by \(e/2\);</li>
+			<li>if one is pinned, the other one moves by \(e\);</li>
+			<li>if both are pinned, we do nothing.</li>
+		</ul>
+		<p>We apply this to all springs, including those whose type is switched off in the GUI.</p>
+
+		<h3>Problems we ran into</h3>
+		<ul>
+			<li>Our first loops used <code>PointMass p = point_masses[i]</code>. This makes a copy, so we were updating the forces and positions of temporaries and the cloth did not move at all. Using a reference (<code>PointMass &amp;p</code>) fixed it.</li>
+			<li>We first looped over the masses and assumed six springs per mass. This is wrong on the borders and we read past the end of <code>springs</code>. We now loop over the springs directly.</li>
+		</ul>
+
+		<h3>Effect of the parameters</h3>
+		<p>All the experiments below use <code>scene/pinned2.json</code> (the two top corners are pinned) with the Normal shader. We changed one parameter at a time and left the others at their default values: \(k_s\) = 5000 N/m, density = 15 g/cm², damping = 0.2%. We restarted the simulation with R after each change.</p>
+
+		<figure>
+			<img src="assets/p2_default.png" alt="pinned2 at rest with default parameters" style="width:50%"/>
+			<figcaption>Reference: default parameters, at rest.</figcaption>
+		</figure>
+
+		<h4>Spring constant \(k_s\)</h4>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p2_ks_low.png" alt="ks = 50 N/m at rest" style="width:100%"/>
+				  <figcaption>\(k_s\) = 50 N/m, at rest</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p2_ks_high.png" alt="ks = 50000 N/m at rest" style="width:100%"/>
+				  <figcaption>\(k_s\) = 50000 N/m, at rest</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+		<p>With a very low \(k_s\) the springs are too weak to hold the weight of the cloth. Ripples run through it while it falls, and at rest the top edge hangs in a deep U with a series of thin wrinkles just below it.</p>
+		<p>With a very high \(k_s\) the cloth hardly stretches. It swings down almost like a stiff sheet and stays smooth the whole time. At rest the top edge sags only slightly and there is a single wide fold.</p>
+		<p>Both cloths take about two seconds to come down, so \(k_s\) changes the shape much more than the timing.</p>
+
+		<h4>Density</h4>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p2_density_low.png" alt="density = 1 g/cm^2 at rest" style="width:100%"/>
+				  <figcaption>density = 1 g/cm², at rest</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p2_density_high.png" alt="density = 150 g/cm^2 at rest" style="width:100%"/>
+				  <figcaption>density = 150 g/cm², at rest</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+		<p>Density does roughly the opposite of \(k_s\). A light cloth puts very little load on the springs and stays almost flat, like the high \(k_s\) case. A heavy cloth sags in a deep U with large folds below the top edge, like the low \(k_s\) case, and already folds more during the fall.</p>
+		<p>The reason is that the acceleration caused by a spring is \(F_s / m\) and \(m\) is proportional to the density, so the shape depends mostly on the ratio \(k_s / \text{density}\). Both cloths fall at about the same speed, since gravity gives every mass the same acceleration.</p>
+
+		<h4>Damping</h4>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p2_damping_zero.png" alt="damping = 0% during the fall" style="width:100%"/>
+				  <figcaption>damping = 0%, about 2 s after the start: the cloth is swinging</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p2_damping_high.png" alt="damping = 1% during the fall" style="width:100%"/>
+				  <figcaption>damping = 1%, about 2 s after the start: the cloth is still coming down</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+		<p>Damping does not change the shape at rest, only how the cloth gets there.</p>
+		<p>With 0% damping the cloth falls fast, overshoots and keeps swinging back and forth, with small waves running across the surface (the uneven shading in the screenshot). The swing dies down very slowly and we never saw the cloth stop completely.</p>
+		<p>With 1% damping (the maximum of the slider) the cloth comes down slowly and smoothly, as if it were moving through a thick liquid, and stops without swinging past its rest position. It takes about 15 seconds, against about 2 seconds with the default 0.2%.</p>
+
+		<h3>pinned4.json at rest</h3>
+		<figure>
+			<img src="assets/p2_pinned4_normal.png" alt="pinned4 at rest with the Normal shader" style="width:70%"/>
+			<figcaption><code>scene/pinned4.json</code> at rest, Normal shader, default parameters. With the four corners pinned the cloth hangs like a hammock.</figcaption>
+		</figure>
 
 		<h2>Part 3: Handling collisions with other objects</h2>
 		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
@@ -93,17 +222,10 @@
 
 		<h2>(Optional) Part 6: Extra Credit - Additional cloth simulation features!</h2>
 		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
-		
-		<h2>Additional Notes (please remove)</h2>
-		<ul>
-			<li>You can also add code if you'd like as so: <code>code code code</code></li>
-			<li>If you'd like to add math equations, 
-				<ul>
-					<li>You can write inline equations like so: \( a^2 + b^2 = c^2 \)</li>
-					<li>You can write display equations like so: \[ a^2 + b^2 = c^2 \]</li>
-				</ul>
-			</li>
-		</ul>
+
+		<h2>Acknowledgement of AI use</h2>
+		<p>For Parts 1 and 2 we used Claude (Anthropic) to explain concepts (mass-spring systems, Verlet integration, the stretch constraint), to explain C++ syntax, to help us find bugs, and to help us word this write-up. We wrote the code ourselves.</p>
+		<p>(TODO Arian: complete for Parts 3 to 5.)</p>
 		</div>
 	</body>
 </html>
