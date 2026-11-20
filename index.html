@@ -37,11 +37,11 @@
 
 		<br>
 
-		Link to GitHub repository: <a href="https://github.com/cal-cs184-student/hw4-go-bears">github.com/cal-cs184-student/hw4-go-bears-writeup</a>
+		Link to GitHub repository: <a href="https://github.com/cal-cs184-student/hw4-go-bears">github.com/cal-cs184-student/hw4-go-bears</a>
 
 		<figure>
-			<img src="assets/clothsim.png" alt="Cloth draped over sphere" style="width:70%"/>
-			<figcaption>(TODO Arian: replace this image and caption with one of our own results.)</figcaption>
+			<img src="assets/intro_image.png" alt="Cloth draped over sphere" style="width:70%"/>
+			<figcaption></figcaption>
 		</figure>
 
 		<!--
@@ -212,16 +212,406 @@
 		</figure>
 
 		<h2>Part 3: Handling collisions with other objects</h2>
-		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+		<p>Every collision object (sphere or plane) has a <code>collide</code> method that takes one point mass and, if it is inside the object, moves it back out. In <code>Cloth::simulate</code> we call it for every pair of point mass and collision object. This happens after the Verlet integration and before the stretch limit of Part 2, so the springs are corrected after the collisions.</p>
+
+		<p>Both objects correct a mass in the same way. We compute a point \(t\) on the surface where the mass should be, and the correction vector from the previous position to it, \(c = t - x_{\text{last}}\). The new position is</p>
+		\[ x_{\text{new}} = x_{\text{last}} + (1 - f)\,c, \]
+		<p>where \(f\) is the friction coefficient of the object. We start from <code>last_position</code> and not from the current position because the current position is already inside the object. With \(f = 0\) the mass ends up exactly on the surface. With \(f &gt; 0\) it only covers part of the way, so it moves less along the surface, which is what friction does.</p>
+
+		<h3>Spheres</h3>
+		<p>A sphere has a center \(o\) and a radius \(r\). A mass at \(x\) collides with it when \(\| x - o \| \le r\). We compare the squared distance with the stored \(r^2\) (<code>radius2</code>) to avoid a square root, and return right away when the mass is outside.</p>
+		<p>Otherwise we extend the line from the center through \(x\) until it reaches the surface. That point is the tangent point:</p>
+		\[ t = o + r\,\frac{x - o}{\| x - o \|}. \]
+		<p>We then apply the correction above. If a mass sits exactly at the center, the direction \(x - o\) is not defined and we leave it alone; this does not happen in practice.</p>
+
+		<h3>Planes</h3>
+		<p>A plane is given by a point \(p_0\) and a unit normal \(n\). The signed distance \(d(x) = (x - p_0) \cdot n\) tells us on which side of the plane a point is. For a plane, "inside" means that the mass crossed the plane during the last time step, so we compute \(d\) for both the current and the previous position. If they have the same sign, the mass stayed on one side and we do nothing. If the signs differ, or the mass landed exactly on the plane, it collided.</p>
+		<p>The tangent point is where the mass would hit the plane if it moved straight towards it, which is its projection onto the plane:</p>
+		\[ t = x - d(x)\,n. \]
+		<p>We do not move the mass exactly onto \(t\). We use a point a small distance \(\varepsilon\) = <code>SURFACE_OFFSET</code> = 0.0001 away from it, on the side the mass came from:</p>
+		\[ t' = t + s\,\varepsilon\,n, \qquad s = \operatorname{sign}\!\big(d(x_{\text{last}})\big). \]
+		<p>If the mass were placed exactly on the plane, its signed distance would be 0 and in the next step we could not tell which side it belongs to, so it could slip through. The offset keeps it strictly on its original side. The correction is then \(c = t' - x_{\text{last}}\), scaled by \(1 - f\) as above.</p>
+
+		<h3>Cloth on a sphere with different \(k_s\)</h3>
+		<p>The screenshots below show <code>scene/sphere.json</code> at rest with the Normal shader. We only changed \(k_s\) and left the other parameters at their default values (density = 15 g/cm², damping = 0.2%). We restarted the simulation with R after each change.</p>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+			  <tr>
+				<td style="text-align: center; width: 33%;">
+				  <img src="assets/p3_ks_500.png" alt="sphere.json at rest with ks = 500 N/m" style="width:100%"/>
+				  <figcaption>\(k_s\) = 500 N/m</figcaption>
+				</td>
+				<td style="text-align: center; width: 33%;">
+				  <img src="assets/p3_ks_5000.png" alt="sphere.json at rest with ks = 5000 N/m" style="width:100%"/>
+				  <figcaption>\(k_s\) = 5000 N/m (default)</figcaption>
+				</td>
+				<td style="text-align: center; width: 33%;">
+				  <img src="assets/p3_ks_50000.png" alt="sphere.json at rest with ks = 50000 N/m" style="width:100%"/>
+				  <figcaption>\(k_s\) = 50000 N/m</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+		<p>With \(k_s\) = 500 N/m the cloth is soft. It stretches under its own weight and hangs almost straight down, close to the sphere, with many narrow vertical folds. It also hangs the lowest of the three.</p>
+		<p>With the default \(k_s\) = 5000 N/m the cloth still follows the shape of the sphere, but the skirt flares out a little more and the folds are fewer and wider.</p>
+		<p>With \(k_s\) = 50000 N/m the cloth is stiff. It barely stretches or bends, so it rests on the top of the sphere like a tent: the sides stick out at an angle instead of hanging down, the corners stay higher, and there are only a few large folds. The underside of the cloth is visible between them.</p>
+		<p>This matches what we saw in Part 2. A low \(k_s\) lets gravity stretch and bend the cloth, while a high \(k_s\) keeps it close to its flat rest shape. The bending springs use \(0.2\,k_s\), so they get stiffer too, which is why the stiff cloth forms wide folds instead of thin ones.</p>
+		<p>The time until the cloth came to rest also grew with \(k_s\): about 55 seconds for 500 N/m, 65 seconds for 5000 N/m, and 80 seconds for 50000 N/m.</p>
+
+		<h3>Cloth on a plane</h3>
+		<figure>
+			<img src="assets/p3_plane.png" alt="plane.json at rest on the plane" style="width:70%"/>
+			<figcaption><code>scene/plane.json</code> at rest on the plane.</figcaption>
+		</figure>
+
 
 		<h2>Part 4: Handling self-collisions</h2>
-		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+		<p>Without self-collisions the cloth passes through itself when it folds. Checking every pair of point masses would cost \(O(n^2)\) per time step, which is too slow. Instead we use spatial hashing: we divide space into boxes and only compare masses that are in the same box. In <code>Cloth::simulate</code>, after the Verlet integration, we build the hash table once and then call <code>self_collide</code> on every point mass.</p>
+
+		<h3>Hashing a position</h3>
+		<p><code>Cloth::hash_position</code> maps a position to a number that identifies its box. The boxes have size \(w \times h \times t\) with \(w = 3 \cdot \text{width} / n_w\), \(h = 3 \cdot \text{height} / n_h\) and \(t = \max(w, h)\). We get the integer box coordinates with</p>
+		\[ (i, j, k) = \left( \left\lfloor \frac{x}{w} \right\rfloor, \left\lfloor \frac{y}{h} \right\rfloor, \left\lfloor \frac{z}{t} \right\rfloor \right). \]
+		<p>The handout suggests <code>fmod</code>. We used <code>floor</code>, which gives the same result for positive coordinates but also puts negative coordinates in the correct box (<code>fmod</code> rounds towards zero, so the boxes on both sides of 0 would be merged). We then combine the three integers into one number:</p>
+		\[ \text{key} = (i + 64) \cdot 128^2 + (j + 64) \cdot 128 + (k + 64). \]
+		<p>This key is unique for all boxes within 64 boxes of the origin on each axis, which covers our scenes. Boxes further away could share a key, but that would only add extra candidates, since we check the real distance afterwards.</p>
+
+		<h3>Building the spatial map</h3>
+		<p><code>Cloth::build_spatial_map</code> first deletes the vectors from the previous time step and clears the map (this part was given). It then loops over all point masses, computes the key of each position and appends a pointer to the mass to the vector stored under that key, creating the vector the first time a key is used.</p>
+
+		<h3>Colliding a point mass</h3>
+		<p><code>Cloth::self_collide</code> looks up the vector of masses that share the box of the given mass \(p\). Pinned masses are skipped, since they must not move. For every candidate \(q\) other than \(p\) itself we compute the distance \(d = \| p - q \|\). If \(d \lt 2 \cdot \text{thickness}\), the two masses are too close, and we compute the correction that would move \(p\) (not \(q\)) away from \(q\) until they are exactly \(2 \cdot \text{thickness}\) apart:</p>
+		\[ c_q = (2 \cdot \text{thickness} - d)\,\frac{p - q}{d}. \]
+		<p>We average these corrections over all candidates that were too close and divide the result by <code>simulation_steps</code> before adding it to the position of \(p\). Spreading the correction over several steps avoids sudden jumps. If no candidate is too close, \(p\) does not move. We also skip the case \(d = 0\), where the direction is not defined.</p>
+
+		<h3>selfCollision.json</h3>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_initial_collision.png" alt="The bottom edge hits the ground and the cloth starts folding onto itself" style="width:100%"/>
+				  <figcaption>1. The bottom edge hits the ground and the cloth starts folding onto itself</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_moment_after_initial_collision.png" alt="The cloth piles up in stacked layers without passing through itself" style="width:100%"/>
+				  <figcaption>2. The cloth piles up in stacked layers without passing through itself</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_third_moment.png" alt="More layers pile up and one corner folds over the top" style="width:100%"/>
+				  <figcaption>3. More layers pile up and one corner folds over the top</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_cloth_rolling_after_third_moment.png" alt="The pile slides apart and the cloth spreads out over the ground" style="width:100%"/>
+				  <figcaption>4. The pile slides apart and the cloth spreads out over the ground</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_slowly_cloth_final_rolls.png" alt="Mostly flat, with a few folds left in the middle" style="width:100%"/>
+				  <figcaption>5. Mostly flat, with a few folds left in the middle</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_second_last_movement.png" alt="Only one thin fold is left" style="width:100%"/>
+				  <figcaption>6. Only one thin fold is left</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_last_movement.png" alt="Flat on the ground, almost at rest" style="width:100%"/>
+				  <figcaption>7. Flat on the ground, almost at rest</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+
+		<h3>Varying \(k_s\) and density</h3>
+		<p>The screenshots above use the default parameters (\(k_s\) = 5000 N/m, density = 15 g/cm²). Below we change one parameter at a time and leave everything else at its default value. We restart the simulation with R after each change.</p>
+
+		<h4>Lower \(k_s\): 500 N/m instead of 5000 N/m (density stays at 15 g/cm²)</h4>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_500_1.png" alt="ks = 500: The bottom edge crumples into many small wrinkles" style="width:100%"/>
+				  <figcaption>1. The bottom edge crumples into many small wrinkles</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_500_2.png" alt="ks = 500: The cloth collapses into a wrinkly heap" style="width:100%"/>
+				  <figcaption>2. The cloth collapses into a wrinkly heap</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_500_3.png" alt="ks = 500: The heap spreads out and the top layer slides to one side" style="width:100%"/>
+				  <figcaption>3. The heap spreads out and the top layer slides to one side</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_500_4.png" alt="ks = 500: Mostly flat with the other side facing up, a large flap still folded over" style="width:100%"/>
+				  <figcaption>4. Mostly flat with the other side facing up, a large flap still folded over</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_500_5.png" alt="ks = 500: Flat except for one corner that is still folded over" style="width:100%"/>
+				  <figcaption>5. Flat except for one corner that is still folded over</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_500_6.png" alt="ks = 500: The corner is still folded: the cloth takes longer to lie flat" style="width:100%"/>
+				  <figcaption>6. The corner is still folded: the cloth takes longer to lie flat</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+		<p>With \(k_s\) = 500 N/m the cloth ends up lying on its other side: with the default \(k_s\) the purple side faces up at the end, here the green side does. It also takes longer until the cloth is flat on the ground; a corner stays folded over for a long time after the rest of the cloth has flattened out.</p>
+
+		<h4>Higher \(k_s\): 50000 N/m instead of 5000 N/m (density stays at 15 g/cm²)</h4>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_50000_1.png" alt="ks = 50000: The bottom edge folds into a few wide, smooth waves" style="width:100%"/>
+				  <figcaption>1. The bottom edge folds into a few wide, smooth waves</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_50000_2.png" alt="ks = 50000: The cloth lands in a few long, thick layers" style="width:100%"/>
+				  <figcaption>2. The cloth lands in a few long, thick layers</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_50000_3.png" alt="ks = 50000: The layers form one large, smooth roll" style="width:100%"/>
+				  <figcaption>3. The layers form one large, smooth roll</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_50000_4.png" alt="ks = 50000: The roll opens up and the green side starts facing up" style="width:100%"/>
+				  <figcaption>4. The roll opens up and the green side starts facing up</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_50000_5.png" alt="ks = 50000: Almost flat, with one corner still folded over" style="width:100%"/>
+				  <figcaption>5. Almost flat, with one corner still folded over</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+		<p>With \(k_s\) = 50000 N/m the cloth also ends up on the other side compared to the default \(k_s\): the green side faces up at the end, as with 500 N/m. Unlike the soft cloth, it lies flat faster than with the default \(k_s\).</p>
+
+		<h4>Higher density: 150 g/cm² instead of 15 g/cm² (\(k_s\) stays at 5000 N/m)</h4>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_5000_density_150_1.png" alt="density = 150: The bottom edge crumples into many small, tight wrinkles" style="width:100%"/>
+				  <figcaption>1. The bottom edge crumples into many small, tight wrinkles</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_5000_density_150_2.png" alt="density = 150: The cloth collapses into a thick, crumpled heap" style="width:100%"/>
+				  <figcaption>2. The cloth collapses into a thick, crumpled heap</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_5000_density_150_3.png" alt="density = 150: The heap spreads out and the top layer slides to one side" style="width:100%"/>
+				  <figcaption>3. The heap spreads out and the top layer slides to one side</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_5000_density_150_4.png" alt="density = 150: Mostly flat with the green side up, a large flap still folded over" style="width:100%"/>
+				  <figcaption>4. Mostly flat with the green side up, a large flap still folded over</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_5000_density_150_5.png" alt="density = 150: The flap gets smaller, one corner is still folded" style="width:100%"/>
+				  <figcaption>5. The flap gets smaller, one corner is still folded</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_5000_density_150_6.png" alt="density = 150: Flat except for the folded corner" style="width:100%"/>
+				  <figcaption>6. Flat except for the folded corner</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+		<p>The heavy cloth behaves almost the same as the soft cloth with \(k_s\) = 500 N/m. It crumples into many small, tight wrinkles when it hits the ground, collapses into a messy heap, and then spreads out with the green side facing up and one corner folded over. The springs are the same as in the default run, but each mass is 10 times heavier, so they are relatively too weak to keep the cloth smooth. This matches what we found in Part 2: the behavior depends mostly on the ratio \(k_s / \text{density}\), and dividing \(k_s\) by 10 or multiplying the density by 10 gives the same ratio.</p>
+
+		<h4>Lower density: 1.5 g/cm² instead of 15 g/cm² (\(k_s\) stays at 5000 N/m)</h4>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_5000_density_1.5_1.png" alt="density = 1.5: The bottom edge folds into a few wide, smooth waves" style="width:100%"/>
+				  <figcaption>1. The bottom edge folds into a few wide, smooth waves</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_5000_density_1.5_2.png" alt="density = 1.5: The cloth lands in a few long, thick layers" style="width:100%"/>
+				  <figcaption>2. The cloth lands in a few long, thick layers</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_5000_density_1.5_3.png" alt="density = 1.5: The layers form one large, smooth roll" style="width:100%"/>
+				  <figcaption>3. The layers form one large, smooth roll</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_5000_density_1.5_4.png" alt="density = 1.5: The roll opens up with the green side facing up" style="width:100%"/>
+				  <figcaption>4. The roll opens up with the green side facing up</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p4_ks_5000_density_1.5_5.png" alt="density = 1.5: One corner stays folded over and the cloth stops moving" style="width:100%"/>
+				  <figcaption>5. One corner stays folded over and the cloth stops moving</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+		<p>The light cloth behaves almost the same as the stiff cloth with \(k_s\) = 50000 N/m, which again matches the \(k_s / \text{density}\) ratio. It folds into a few wide, smooth waves instead of many small wrinkles, lands in a few thick layers that form one large roll, and then opens up with the green side facing up.</p>
+		<p>At the end one corner stays folded over and the cloth stops moving completely; the corner never unfolds. This is a stable state, not a bug. Once the flap lies flat on top of the cloth, gravity presses it down instead of pulling it open. Only the bending springs along the crease push back, and they are too weak to lift the whole flap. Self-collision keeps the two layers from passing through each other, the plane in <code>selfCollision.json</code> has a friction of 0.5 that holds the cloth in place, and damping removes the remaining motion. Real cloth behaves the same way: a folded corner stays folded unless something pulls on it.</p>
+
 
 		<h2>Part 5: Shaders</h2>
-		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
+		<h3>Shader programs</h3>
+		<p>A shader program is a small program that runs on the GPU as part of the rendering pipeline. Thousands of copies run in parallel, one for each vertex or pixel, which makes it much faster than computing the shading on the CPU. In OpenGL a shader program has two stages.</p>
+		<ul>
+			<li>The <b>vertex shader</b> runs once per vertex. It reads the attributes of the vertex (position, normal, tangent, uv), transforms them from model space to world space with <code>u_model</code>, and computes <code>gl_Position</code>, the position on the screen, with <code>u_view_projection</code>. It can also move the vertex, which we use for displacement mapping.</li>
+			<li>The <b>fragment shader</b> runs once per pixel covered by a triangle. Its inputs are the outputs of the vertex shader, interpolated across the triangle with barycentric coordinates. From the position, the normal, the light, the camera and textures it computes the final color <code>out_color</code>.</li>
+		</ul>
+		<p>Together they describe lighting and materials: the vertex shader provides the geometry, and the fragment shader decides how each point of the surface reacts to the light, for example whether it is matte or shiny, which texture it shows, or whether it reflects its environment. Values that are the same for the whole draw call, such as the light position, the camera position or a texture, are passed in as <i>uniforms</i>.</p>
+
+		<h3>Diffuse shading</h3>
+		<p>In <code>Diffuse.frag</code> we implement Lambertian shading. With the vector \(l\) from the point to the light, its squared length \(r^2\), and the unit normal \(n\):</p>
+		\[ L_d = k_d\,\frac{I}{r^2}\,\max(0,\, n \cdot l). \]
+		<p>We use \(k_d = 1\) and multiply by the color picked in the GUI. A surface is brightest when it faces the light and black when it faces away from it, and it looks the same from every viewing direction.</p>
+
+		<h3>Blinn-Phong shading</h3>
+		<p>The Blinn-Phong model adds up three terms:</p>
+		\[ L = k_a\,I_a + k_d\,\frac{I}{r^2}\,\max(0,\, n \cdot l) + k_s\,\frac{I}{r^2}\,\max(0,\, n \cdot h)^p. \]
+		<ul>
+			<li>The <b>ambient</b> term \(k_a I_a\) is a constant that stands in for the light bouncing around the scene. Without it, the parts facing away from the light would be completely black.</li>
+			<li>The <b>diffuse</b> term is the Lambertian shading from above. It depends only on the angle between the normal and the light.</li>
+			<li>The <b>specular</b> term creates highlights. \(h\) is the half vector, the normalized sum of the directions to the light and to the camera. When \(h\) is close to the normal, the surface reflects the light towards the camera and we see a bright spot. The exponent \(p\) controls how small and sharp the highlight is.</li>
+		</ul>
+		<p>We use \(k_a = 0.1\), \(I_a = (1, 1, 1)\), \(k_d\) = the GUI color, \(k_s = 0.5\) and \(p = 100\). To take the screenshots below, we set the constant <code>MODE</code> at the top of <code>Phong.frag</code> to show only one term at a time.</p>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p5_phong_ambient.png" alt="Blinn-Phong, ambient term only" style="width:100%"/>
+				  <figcaption>Ambient only</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p5_phong_diffuse.png" alt="Blinn-Phong, diffuse term only" style="width:100%"/>
+				  <figcaption>Diffuse only</figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p5_phong_specular.png" alt="Blinn-Phong, specular term only" style="width:100%"/>
+				  <figcaption>Specular only</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p5_phong_full.png" alt="Full Blinn-Phong" style="width:100%"/>
+				  <figcaption>Full Blinn-Phong</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+
+		<h3>Texture mapping</h3>
+		<p>In <code>Texture.frag</code> we sample the texture <code>u_texture_1</code> at the interpolated uv coordinates of the fragment, <code>texture(u_texture_1, v_uv)</code>, and use the result as the color. For the screenshot we replaced <code>textures/texture_1.png</code> with our own image.</p>
+		<figure>
+			<img src="assets/p5_texture_custom.png" alt="Cloth with a custom texture" style="width:70%"/>
+			<figcaption>Texture mapping with our own texture.</figcaption>
+		</figure>
+
+		<h3>Bump mapping</h3>
+		<p>Bump mapping makes a surface look bumpy by changing only its normals, not its geometry. The height map is stored in <code>u_texture_2</code>, and we use its red channel as the height \(h(u, v)\). In <code>Bump.frag</code> we:</p>
+		<ol>
+			<li>build the matrix \(TBN = [\,t \;\; b \;\; n\,]\) from the tangent \(t\), the normal \(n\) and the bitangent \(b = n \times t\). It converts from the local tangent space of the surface to world space;</li>
+			<li>estimate how fast the height changes in the \(u\) and \(v\) directions, using the neighboring texel (\(w\) and \(h\) are the size of the texture):
+			\[ dU = \big(h(u + 1/w,\, v) - h(u, v)\big)\,k_h\,k_n, \qquad dV = \big(h(u,\, v + 1/h) - h(u, v)\big)\,k_h\,k_n, \]
+			where \(k_h\) is the height scaling and \(k_n\) the normal scaling from the GUI;</li>
+			<li>set the normal in tangent space to \(n_o = (-dU, -dV, 1)\), which tilts it away from where the height increases, and transform it to world space: \(n_d = TBN\, n_o\);</li>
+			<li>shade with Blinn-Phong as above, using \(n_d\) instead of the original normal.</li>
+		</ol>
+
+		<h3>Displacement mapping</h3>
+		<p>Displacement mapping actually moves the geometry. In <code>Displacement.vert</code> we move each vertex along its normal by the height at its uv coordinates:</p>
+		\[ p' = p + n\, h(u, v)\, k_h. \]
+		<p>We then compute <code>v_position</code> and <code>gl_Position</code> from the displaced position. <code>Displacement.frag</code> is the same as <code>Bump.frag</code>, so the displaced surface also gets the bump-mapped normals.</p>
+
+		<p>For the screenshots below we used our own height map instead of the default <code>texture_2.png</code>. We used normal = 2 and height = 1 for bump mapping, and normal = 100 and height = 0.02 for displacement mapping.</p>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+			  <tr>
+				<td style="text-align: center; width: 33%;">
+				  <img src="assets/p5_bump_cloth.png" alt="Bump mapping on the cloth" style="width:100%"/>
+				  <figcaption>Bump mapping on the cloth</figcaption>
+				</td>
+				<td style="text-align: center; width: 33%;">
+				  <img src="assets/p5_bump_sphere.png" alt="Bump mapping on the sphere" style="width:100%"/>
+				  <figcaption>Bump mapping on the sphere</figcaption>
+				</td>
+				<td style="text-align: center; width: 33%;">
+				  <img src="assets/p5_displacement_sphere.png" alt="Displacement mapping on the sphere" style="width:100%"/>
+				  <figcaption>Displacement mapping on the sphere</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+		<p>Both spheres show the same pattern, but only the displaced one really has it in its shape. With bump mapping the outline of the sphere stays perfectly round, because only the shading changes; the bumps disappear when you look at the edge of the sphere. With displacement mapping the vertices move, so the outline becomes bumpy as well and the bumps cast their shape against the background.</p>
+
+		<h4>Effect of the sphere resolution</h4>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p5_bump_sphere_16.png" alt="Bump mapping, -o 16 -a 16" style="width:100%"/>
+				  <figcaption>Bump mapping, <code>-o 16 -a 16</code></figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p5_bump_sphere_128.png" alt="Bump mapping, -o 128 -a 128" style="width:100%"/>
+				  <figcaption>Bump mapping, <code>-o 128 -a 128</code></figcaption>
+				</td>
+			  </tr>
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p5_displacement_sphere_16.png" alt="Displacement mapping, -o 16 -a 16" style="width:100%"/>
+				  <figcaption>Displacement mapping, <code>-o 16 -a 16</code></figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p5_displacement_sphere_128.png" alt="Displacement mapping, -o 128 -a 128" style="width:100%"/>
+				  <figcaption>Displacement mapping, <code>-o 128 -a 128</code></figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
+		<p>Bump mapping looks almost the same at both resolutions, because the normal is computed per pixel in the fragment shader. Only the outline of the coarse sphere becomes more polygonal.</p>
+		<p>Displacement mapping depends a lot on the resolution, because the height is only applied at the vertices. With 16 × 16 there are far fewer vertices than texels, so the height map is sampled too rarely: the fine details of the texture are lost and the surface looks blocky and jagged. With 128 × 128 there are enough vertices to follow the texture, and the displaced geometry matches the bump-mapped shading much better.</p>
+
+		<h3>Environment-mapped reflections</h3>
+		<p>The mirror shader in <code>Mirror.frag</code> makes the surface reflect a cubemap that surrounds the scene. We compute the direction from the point to the camera, \(w_o = \text{normalize}(\text{cam} - p)\), reflect the opposite direction about the normal to get \(w_i = \text{reflect}(-w_o, n)\), and use \(w_i\) to look up the color in the cubemap <code>u_texture_cubemap</code>. We do not check whether the reflected ray hits another object, so only the environment is reflected.</p>
+		<div style="display: flex; flex-direction: column; align-items: center;">
+			<table style="width: 100%; text-align: center; border-collapse: collapse;">
+			  <tr>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p5_mirror_cloth.png" alt="Mirror shader on the cloth" style="width:100%"/>
+				  <figcaption>Mirror shader on the cloth</figcaption>
+				</td>
+				<td style="text-align: center; width: 50%;">
+				  <img src="assets/p5_mirror_sphere.png" alt="Mirror shader on the sphere" style="width:100%"/>
+				  <figcaption>Mirror shader on the sphere</figcaption>
+				</td>
+			  </tr>
+			</table>
+		</div>
 
 		<h2>(Optional) Part 6: Extra Credit - Additional cloth simulation features!</h2>
-		Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
+
 
 		<h2>Acknowledgement of AI use</h2>
 		<p>For Parts 1 and 2 we used Claude (Anthropic) to explain concepts (mass-spring systems, Verlet integration, the stretch constraint), to explain C++ syntax, to help us find bugs, and to help us word this write-up. We wrote the code ourselves.</p>
