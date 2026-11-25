@@ -637,8 +637,7 @@
 			  </tr>
 			</table>
 		</div>
-		<p>Bump mapping does not depend on the mesh resolution, because the normal is computed per pixel in the fragment shader. With 16 × 16 only the outline of the sphere becomes more polygonal, while the bumps look the same.</p>
-		<p>Displacement mapping depends on the resolution, because the height is only applied at the vertices. With 16 × 16 the height map is sampled at very few points, so the displaced geometry cannot follow the tiles and becomes coarse and blocky. With 128 × 128 there are many more vertices, so the geometry follows the height map more closely. The shading is the same in both cases, because it comes from the fragment shader. Since the cloth covers most of the sphere in these screenshots and its resolution does not change, the cloth itself looks very similar in all four images.</p>
+		<p>We figured out the following observations between both approaches. Bump mapping looks almost the same at both resolutions, because the bumps come only from the lighting, which is computed for every pixel. With 16 × 16 only the outline of the sphere becomes a bit edgy. Displacement mapping changes a lot because with 16 × 16 there are too few vertices to follow the tiles, so the sphere stays smooth and looks just like the bump-mapped one. With 128 × 128 there are enough vertices, so the tiles really stick out and the outline of the sphere becomes bumpy.</p>
 
 		<h3>Environment-mapped reflections</h3>
 		<div style="display: flex; flex-direction: column; align-items: center;">
